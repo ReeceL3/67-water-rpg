@@ -9,12 +9,16 @@ pygame.display.set_caption("67 Water RPG – Quest for the Princess")
 CLOCK = pygame.time.Clock()
 FPS = 120
 
+# Debug mode - press D to toggle
+DEBUG_MODE = False
+
 # game state
 class GameState:
     def __init__(self):
         self.camera_x = 0.0
         self.screen_shake = 0
         self.screen_shake_intensity = 0
+        self.debug_mode = False
 
 game_state = GameState()
 
@@ -100,6 +104,12 @@ class SwordSwing(pygame.sprite.Sprite):
         # active damage frames
         self.active_start = 3
         self.active_end = 8
+        
+        # Store facing at creation time
+        self.facing = getattr(owner, "facing", 1)
+        self.owner = owner
+        self.did_hit = set()
+        
         # Draw horizontal sword pointing right
         blade_length = int(50 * CHAR_SCALE)
         blade_w = max(2, int(5 * CHAR_SCALE))
@@ -107,32 +117,32 @@ class SwordSwing(pygame.sprite.Sprite):
         handle_w = max(2, int(5 * CHAR_SCALE))
         
         size = int(80 * CHAR_SCALE)
-        self.base = pygame.Surface((size, size), pygame.SRCALPHA)
+        self.base_right = pygame.Surface((size, size), pygame.SRCALPHA)
         cx = size // 2
         cy = size // 2
         
-        # Draw sword horizontally (for stabbing motion)
+        # Draw sword horizontally (for stabbing motion, pointing right)
         # blade: long thin rectangle
         blade_rect = pygame.Rect(cx, cy - blade_w//2, blade_length, blade_w)
-        pygame.draw.rect(self.base, (220,220,230), blade_rect)  # steel blade
+        pygame.draw.rect(self.base_right, (220,220,230), blade_rect)  # steel blade
         # blade tip (pointed)
         tip = [(cx + blade_length, cy - blade_w//2), (cx + blade_length + int(8*CHAR_SCALE), cy), (cx + blade_length, cy + blade_w//2)]
-        pygame.draw.polygon(self.base, (220,220,230), tip)
+        pygame.draw.polygon(self.base_right, (220,220,230), tip)
         # guard
         guard_h = int(12 * CHAR_SCALE)
-        pygame.draw.rect(self.base, (150,120,60), (cx - int(2*CHAR_SCALE), cy - guard_h//2, int(4*CHAR_SCALE), guard_h))
+        pygame.draw.rect(self.base_right, (150,120,60), (cx - int(2*CHAR_SCALE), cy - guard_h//2, int(4*CHAR_SCALE), guard_h))
         # handle (to the left)
-        pygame.draw.rect(self.base, (60,30,10), (cx - int(2*CHAR_SCALE) - handle_len, cy - handle_w//2, handle_len, handle_w))
+        pygame.draw.rect(self.base_right, (60,30,10), (cx - int(2*CHAR_SCALE) - handle_len, cy - handle_w//2, handle_len, handle_w))
         # pommel
-        pygame.draw.circle(self.base, (180,140,60), (cx - int(2*CHAR_SCALE) - handle_len - int(4*CHAR_SCALE), cy), int(4*CHAR_SCALE))
+        pygame.draw.circle(self.base_right, (180,140,60), (cx - int(2*CHAR_SCALE) - handle_len - int(4*CHAR_SCALE), cy), int(4*CHAR_SCALE))
         # edge highlight on top of blade
-        pygame.draw.line(self.base, WHITE, (cx, cy - blade_w//2 + 1), (cx + blade_length, cy - blade_w//2 + 1), max(1, int(1*CHAR_SCALE)))
+        pygame.draw.line(self.base_right, WHITE, (cx, cy - blade_w//2 + 1), (cx + blade_length, cy - blade_w//2 + 1), max(1, int(1*CHAR_SCALE)))
+        
+        # Create flipped version for left-facing
+        self.base_left = pygame.transform.flip(self.base_right, True, False)
         
         self.image = pygame.Surface((size, size), pygame.SRCALPHA)
         self.rect = self.image.get_rect()
-        self.facing = getattr(owner, "facing", 1)
-        self.owner = owner
-        self.did_hit = set()
 
     def update(self):
         self.timer -= 1
@@ -151,10 +161,13 @@ class SwordSwing(pygame.sprite.Sprite):
         else:
             extend = (1.0 - prog) / 0.6 * int(60 * CHAR_SCALE)  # retracts
         
+        # Choose correct sword orientation based on facing direction
+        base = self.base_right if self.facing == 1 else self.base_left
+        
         # redraw the sword (static orientation, just translate)
         self.image.fill((0,0,0,0))
         size = self.image.get_width()
-        self.image.blit(self.base, (0, 0))
+        self.image.blit(base, (0, 0))
         
         # Position: start at owner + base offset, move forward during stab
         base_offset_x = int(32 * CHAR_SCALE) if self.facing == 1 else int(-32 * CHAR_SCALE)
@@ -399,47 +412,114 @@ class Player(pygame.sprite.Sprite):
         self.draw_at_pos(s, self.rect)
         
     def draw_at_pos(self, s, rect):
-        # simple procedural 2D character: head + torso + arm, scaled
+        # Render character to a temporary surface
         x, y = rect.topleft
         bob = 0
         if self.walk_phase:
-            bob = int(math.sin(self.walk_phase / 5.0) * 3 * self.scale)
+            bob = int(math.sin(self.walk_phase / 5.0) * 2 * self.scale)
+        
+        surf_w = rect.width
+        surf_h = rect.height
+        char_surf = pygame.Surface((surf_w, surf_h), pygame.SRCALPHA)
+        
+        # Character drawing with proper centering
+        # Head
         head_w = int(16 * self.scale)
         head_h = int(14 * self.scale)
-        torso_w = int(16 * self.scale)
-        torso_h = int(26 * self.scale)
-        head_x = x + int(8 * self.scale)
-        head_y = y + int(0 * self.scale) + bob
-        torso_x = x + int(8 * self.scale)
-        torso_y = y + int(14 * self.scale) + bob
-        # head
-        pygame.draw.ellipse(s, (80, 160, 220), (head_x, head_y, head_w, head_h))
-        # torso
-        pygame.draw.rect(s, (40, 100, 180), (torso_x, torso_y, torso_w, torso_h))
-        # arm
-        arm_w = int(10 * self.scale)
+        head_x = int((surf_w - head_w) / 2)
+        head_y = int(4 * self.scale) + bob
+        
+        head_color = (200, 160, 120)
+        pygame.draw.ellipse(char_surf, head_color, (head_x, head_y, head_w, head_h))
+        # Hair
+        pygame.draw.rect(char_surf, (40, 30, 20), (head_x, head_y, head_w, int(5*self.scale)))
+        # Eyes
+        eye_color = (30, 30, 100)
+        eye_left_x = head_x + int(4 * self.scale)
+        eye_right_x = head_x + int(12 * self.scale)
+        eye_y = head_y + int(5 * self.scale)
+        pygame.draw.circle(char_surf, eye_color, (int(eye_left_x), int(eye_y)), int(1.5*self.scale))
+        pygame.draw.circle(char_surf, eye_color, (int(eye_right_x), int(eye_y)), int(1.5*self.scale))
+        pygame.draw.circle(char_surf, WHITE, (int(eye_left_x + 0.3*self.scale), int(eye_y - 0.3*self.scale)), int(0.7*self.scale))
+        pygame.draw.circle(char_surf, WHITE, (int(eye_right_x + 0.3*self.scale), int(eye_y - 0.3*self.scale)), int(0.7*self.scale))
+        
+        # Torso
+        torso_w = int(18 * self.scale)
+        torso_h = int(22 * self.scale)
+        torso_x = int((surf_w - torso_w) / 2)
+        torso_y = head_y + head_h + bob
+        
+        torso_color = (60, 100, 160)
+        pygame.draw.rect(char_surf, torso_color, (torso_x, torso_y, torso_w, torso_h))
+        # Armor stripe
+        pygame.draw.rect(char_surf, (100, 140, 200), (torso_x + int(7*self.scale), torso_y, int(4*self.scale), torso_h))
+        
+        # Arms
+        arm_w = int(7 * self.scale)
         arm_h = int(4 * self.scale)
-        if self.facing == 1:
-            pygame.draw.rect(s, (80, 160, 220), (x + int(20 * self.scale), y + int(20 * self.scale) + bob, arm_w, arm_h))
-        else:
-            pygame.draw.rect(s, (80, 160, 220), (x - int(2 * self.scale), y + int(20 * self.scale) + bob, arm_w, arm_h))
-        # health bar
+        arm_y = torso_y + int(4 * self.scale) + bob
+        arm_left_x = torso_x - arm_w - int(2*self.scale)
+        arm_right_x = torso_x + torso_w + int(2*self.scale)
+        
+        pygame.draw.rect(char_surf, head_color, (arm_left_x, arm_y, arm_w, arm_h))
+        pygame.draw.rect(char_surf, head_color, (arm_right_x, arm_y, arm_w, arm_h))
+        
+        # Legs
+        leg_w = int(6 * self.scale)
+        leg_h = int(14 * self.scale)
+        leg_color = (40, 40, 60)
+        leg_left_x = torso_x + int(2*self.scale)
+        leg_right_x = torso_x + int(10*self.scale)
+        leg_y = torso_y + torso_h + bob
+        
+        pygame.draw.rect(char_surf, leg_color, (leg_left_x, leg_y, leg_w, leg_h))
+        pygame.draw.rect(char_surf, leg_color, (leg_right_x, leg_y, leg_w, leg_h))
+        
+        # Health bar drawn on main surface (not rotated)
         pygame.draw.rect(s, GRAY, (rect.x, rect.y - 8, 40, 5))
         pygame.draw.rect(s, RED, (rect.x, rect.y - 8, 40 * (self.health / self.max_health), 5))
-        # dash glow when invulnerable
-        if self.invuln > 0:
-            a = max(40, int(200 * (self.invuln / 12)))
-            glow = pygame.Surface((rect.width * 2, rect.height), pygame.SRCALPHA)
-            glow.fill((60, 160, 255, a))
-            s.blit(glow, (rect.x - rect.width // 2, rect.y))
-        # dash afterimages
+
+        # Dash visuals: enhanced motion blur and speed effect
         if self.dash_timer > 0:
-            for i in range(1,4):
-                ta = max(10, int(120 * (1 - i/4)))
-                trail = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
-                trail.fill((60,160,255,ta))
-                tx = rect.x - int(self.dash_vel * 0.06 * i)
-                s.blit(trail, (tx, rect.y))
+            # compute progress of dash (0..1)
+            dash_prog = max(0.0, min(1.0, (12 - self.dash_timer) / 12.0))
+            
+            # Draw speed lines behind the character
+            line_color = (150, 200, 255)
+            num_lines = 5
+            for i in range(num_lines):
+                line_opacity = int(180 * (1 - dash_prog) * (1 - i/num_lines))
+                line_start_x = rect.centerx - int(self.dash_vel * 0.06 * (i+1)) * self.facing
+                pygame.draw.line(s, line_color, 
+                                (line_start_x, rect.centery - int(15*self.scale)), 
+                                (line_start_x - int(20*self.scale) * self.facing, rect.centery + int(15*self.scale)), 
+                                max(1, int(2*self.scale)))
+            
+            # Lean angle when dashing
+            lean = int(20 * (1 - (self.dash_timer / 12.0)))
+            angle = -lean if self.facing == 1 else lean
+            rotated = pygame.transform.rotate(char_surf, angle)
+            
+            # draw motion blur afterimages
+            for i in range(2):
+                alpha = max(50, int(140 * (1 - i / 2.0) * (1 - dash_prog)))
+                trail = rotated.copy()
+                trail.fill((100, 180, 255, alpha), special_flags=pygame.BLEND_RGBA_MULT)
+                tx = rect.x - int(self.dash_vel * 0.05 * (i+1.5) * self.facing)
+                ty = rect.y
+                s.blit(trail, (tx - (rotated.get_width() - surf_w)//2, ty - (rotated.get_height() - surf_h)//2))
+            
+            # Glow effect at dash point
+            glow_size = int(20 * self.scale * (1 - dash_prog))
+            glow = pygame.Surface((glow_size*2, glow_size*2), pygame.SRCALPHA)
+            pygame.draw.circle(glow, (150, 200, 255, 100), (glow_size, glow_size), glow_size)
+            s.blit(glow, (rect.centerx - glow_size, rect.centery - glow_size))
+            
+            # Finally blit rotated main character
+            s.blit(rotated, (rect.x - (rotated.get_width() - surf_w)//2, rect.y - (rotated.get_height() - surf_h)//2))
+        else:
+            # normal draw
+            s.blit(char_surf, (x, y))
 
 class Enemy(pygame.sprite.Sprite):
     def __init__(self,x,y):
@@ -479,6 +559,7 @@ class Enemy(pygame.sprite.Sprite):
         self.facing=1
         self.vel_y = 0.0
         self.knockback_x = 0.0
+        self.hit_flash_timer = 0  # Flash when hit by sword
         
     def ai(self,player,plats,swings,particles):
         # knockback friction
@@ -501,6 +582,8 @@ class Enemy(pygame.sprite.Sprite):
                 self.rect.bottom=p.rect.top
                 self.vel_y=0
         if self.cool>0:self.cool-=1
+        if self.hit_flash_timer > 0:
+            self.hit_flash_timer -= 1
     
     def take_damage(self, dmg, particles):
         """Handle damage and spawn damage particles."""
@@ -514,6 +597,7 @@ class Enemy(pygame.sprite.Sprite):
             particles.add(Particle(self.rect.centerx, self.rect.centery, vx, vy, RED, 20))
         game_state.screen_shake = 2
         game_state.screen_shake_intensity = 1
+        self.hit_flash_timer = 8  # Flash for 8 frames when hit
         
     def draw(self,s):
         self.draw_at_pos(s, self.rect)
@@ -591,6 +675,171 @@ def story(lines):
         for e in pygame.event.get():
             if e.type==pygame.QUIT: pygame.quit();sys.exit()
             if e.type==pygame.KEYDOWN and e.key==pygame.K_RETURN: wait=False
+
+def cutscene(title, lines, duration=None, color_scheme=None):
+    """Display an animated cinematic cutscene with dramatic effects."""
+    import time
+    start_time = time.time()
+    fade_in_time = 0.7
+    display_time = duration if duration else 4.0
+    fade_out_time = 0.7
+    total_time = fade_in_time + display_time + fade_out_time
+    
+    # Color scheme: (primary, accent1, accent2)
+    if color_scheme is None:
+        color_scheme = ((255, 255, 100), (100, 200, 255), (200, 100, 255))  # Gold/Cyan/Purple
+    
+    # Generate particle effects
+    particles = []
+    for _ in range(30):
+        particles.append({
+            'x': random.uniform(0, WIDTH),
+            'y': random.uniform(-50, HEIGHT + 50),
+            'vx': random.uniform(-1, 1),
+            'vy': random.uniform(0.5, 2),
+            'life': random.uniform(0.5, 3),
+            'color': random.choice(color_scheme)
+        })
+    
+    while True:
+        elapsed = time.time() - start_time
+        if elapsed > total_time:
+            break
+        
+        # Calculate alpha based on fade phases
+        if elapsed < fade_in_time:
+            alpha = int(255 * (elapsed / fade_in_time))
+        elif elapsed < fade_in_time + display_time:
+            alpha = 255
+        else:
+            remaining = total_time - elapsed
+            alpha = int(255 * (remaining / fade_out_time))
+        
+        # BACKGROUND: Gradient from dark to atmospheric
+        for y in range(0, HEIGHT, 20):
+            ratio = y / HEIGHT
+            r = int(10 + ratio * 30)
+            g = int(10 + ratio * 40)
+            b = int(20 + ratio * 50)
+            color = (r, g, b)
+            pygame.draw.line(SCREEN, color, (0, y), (WIDTH, y))
+        
+        # Animated background pattern - dancing particles
+        for i, p in enumerate(particles):
+            p['y'] += p['vy']
+            p['x'] += p['vx'] + math.sin(elapsed * 2 + i) * 0.5
+            p['life'] -= 1.0 / FPS
+            
+            if p['life'] < 0:
+                p['y'] = -50
+                p['life'] = random.uniform(2, 3)
+                p['x'] = random.uniform(0, WIDTH)
+            
+            particle_alpha = int(150 * min(1, p['life']) * (alpha / 255.0))
+            if particle_alpha > 0:
+                pygame.draw.circle(SCREEN, p['color'], (int(p['x']), int(p['y'])), 2)
+        
+        # Vertical scanning lines for cinematic effect
+        for y in range(0, HEIGHT, 8):
+            line_alpha = int(30 * (alpha / 255.0))
+            scan_offset = int(math.sin(elapsed * 3 + y / 50) * 5)
+            pygame.draw.line(SCREEN, (50, 100, 150), (0, y + scan_offset), (WIDTH, y + scan_offset), 1)
+        
+        # Dynamic glow background
+        glow_surf = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        # Pulsing multi-color glow
+        glow_r = int(color_scheme[0][0] * 0.4 + math.sin(elapsed * 1.5) * 30)
+        glow_g = int(color_scheme[1][1] * 0.4 + math.sin(elapsed * 1.2) * 20)
+        glow_b = int(color_scheme[2][2] * 0.4 + math.sin(elapsed * 1.8) * 30)
+        glow_surf.fill((glow_r, glow_g, glow_b, int(20 * (alpha / 255.0))))
+        SCREEN.blit(glow_surf, (0, 0))
+        
+        # Vignette effect (dark edges)
+        vignette = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        vignette.fill((0, 0, 0, int(80 * (alpha / 255.0))))
+        SCREEN.blit(vignette, (0, 0))
+        
+        # TITLE: Large, glowing, dramatic
+        title_bob = math.sin(elapsed * 1.5) * 8
+        title_y = int(140 + title_bob)
+        
+        # Multi-layer glow with expanding rings
+        for glow_layer in range(6, 0, -1):
+            glow_alpha = int(40 * (1 - glow_layer / 6) * (alpha / 255.0))
+            glow_size_offset = glow_layer * 2
+            
+            glow_title = BIG.render(title, True, color_scheme[0])
+            glow_title_alpha = pygame.Surface((glow_title.get_width() + glow_size_offset*2, glow_title.get_height() + glow_size_offset*2), pygame.SRCALPHA)
+            glow_title_alpha.fill((0, 0, 0, 0))
+            glow_title_alpha.blit(glow_title, (glow_size_offset, glow_size_offset))
+            glow_title_alpha.set_alpha(glow_alpha)
+            glow_rect = glow_title_alpha.get_rect(center=(WIDTH//2, title_y))
+            SCREEN.blit(glow_title_alpha, glow_rect)
+        
+        # Main title with bright color
+        title_surf = BIG.render(title, True, color_scheme[0])
+        title_alpha_surf = pygame.Surface(title_surf.get_size(), pygame.SRCALPHA)
+        title_alpha_surf.blit(title_surf, (0, 0))
+        title_alpha_surf.set_alpha(min(255, alpha + 30))
+        SCREEN.blit(title_alpha_surf, (WIDTH//2 - title_surf.get_width()//2, title_y))
+        
+        # Underline effect
+        underline_width = int(title_surf.get_width() * (0.3 + 0.3 * math.sin(elapsed * 2)))
+        underline_alpha = int(200 * (alpha / 255.0))
+        pygame.draw.line(SCREEN, color_scheme[1], 
+                        (WIDTH//2 - underline_width//2, title_y + 60),
+                        (WIDTH//2 + underline_width//2, title_y + 60), 3)
+        
+        # TEXT LINES: Dramatic reveal with wave effect
+        for i, line in enumerate(lines):
+            # Stagger animation - each line fades in and up
+            line_delay = (i * 0.4)
+            if elapsed > line_delay:
+                line_progress = min(1.0, (elapsed - line_delay) / 0.6)
+                line_alpha = int(alpha * line_progress)
+                # Slide up effect
+                line_y_offset = int((1 - line_progress) * 30)
+            else:
+                line_alpha = 0
+                line_y_offset = 30
+            
+            line_y = int(310 + i * 70 + math.sin(elapsed * 1.2 + i * 0.8) * 4 + line_y_offset)
+            
+            # Multiple glow layers for text
+            for glow_offset in range(3, 0, -1):
+                glow_text = FONT.render(line, True, color_scheme[1])
+                glow_text_alpha = pygame.Surface(glow_text.get_size(), pygame.SRCALPHA)
+                glow_text_alpha.fill((0, 0, 0, 0))
+                glow_text_alpha.blit(glow_text, (0, 0))
+                glow_text_alpha.set_alpha(int(line_alpha * 0.2))
+                glow_x = WIDTH//2 - glow_text.get_width()//2 + glow_offset
+                glow_y = line_y + glow_offset
+                SCREEN.blit(glow_text_alpha, (glow_x, glow_y))
+            
+            # Main text in white
+            line_surf = FONT.render(line, True, WHITE)
+            line_alpha_surf = pygame.Surface(line_surf.get_size(), pygame.SRCALPHA)
+            line_alpha_surf.blit(line_surf, (0, 0))
+            line_alpha_surf.set_alpha(line_alpha)
+            SCREEN.blit(line_alpha_surf, (WIDTH//2 - line_surf.get_width()//2, line_y))
+        
+        # SKIP PROMPT: Breathing effect
+        skip_alpha = int(180 * (0.5 + 0.5 * math.sin(elapsed * 2.5)) * (alpha / 255.0))
+        skip_text = FONT.render("Press SPACE or ENTER to continue", True, (150, 200, 255))
+        skip_alpha_surf = pygame.Surface(skip_text.get_size(), pygame.SRCALPHA)
+        skip_alpha_surf.blit(skip_text, (0, 0))
+        skip_alpha_surf.set_alpha(skip_alpha)
+        SCREEN.blit(skip_alpha_surf, (WIDTH//2 - skip_text.get_width()//2, HEIGHT - 70))
+        
+        pygame.display.flip()
+        CLOCK.tick(FPS)
+        
+        for e in pygame.event.get():
+            if e.type==pygame.QUIT:
+                pygame.quit(); sys.exit()
+            if e.type==pygame.KEYDOWN:
+                if e.key==pygame.K_SPACE or e.key==pygame.K_RETURN:
+                    return
 
 
 def choose_class():
@@ -690,24 +939,50 @@ plats=[Platform(0, HEIGHT-40, LEVEL_WIDTH, 40)]  # Extend the ground platform
 
 # player selects class before starting
 player_class = choose_class()
+
+# Opening cutscene
+cutscene("THE REALM OF 67", [
+    "A peaceful kingdom lay in ruins...",
+    "The ancient princess of 67 has been kidnapped",
+    "by the fearsome BANDIT KING."
+], duration=4.0)
+
+cutscene("YOUR QUEST", [
+    f"You are a {player_class}.",
+    "Gather the mystical 67 Water",
+    "to defeat the bandits and save the realm."
+], duration=4.0)
+
 player = Player(120, HEIGHT-200, player_class)
 
-story([f"You awaken once more in the realm of 67.", f"You are a {player_class}.", "The princess has been taken by the Bandit King.","Collect the sacred 67 Water and rescue her!"])
+story([f"You stand at the entrance to the realm.", "Prepare yourself for battle!", "Press ENTER to begin..."])
 
 # Map exploration: place enemies on the map and allow the player to roam
 map_enemies = pygame.sprite.Group()
 map_swings = pygame.sprite.Group()
 particles = pygame.sprite.Group()
-# place bandits spread out far across the level for traversal
-bandit_positions = [WIDTH + 500, WIDTH + 1200, WIDTH + 2000]  # Much further to the right
-for i, bx in enumerate(bandit_positions, start=1):
+# place bandits spread out across the whole level for traversal
+num_bandits = 10
+spawn_min_x = WIDTH + 200
+spawn_max_x = LEVEL_WIDTH - 300
+for i in range(num_bandits):
+    # evenly space with some random jitter
+    t = i / max(1, num_bandits - 1)
+    bx = int(spawn_min_x + t * (spawn_max_x - spawn_min_x) + random.randint(-120, 120))
+    bx = max(spawn_min_x, min(bx, spawn_max_x))
     e = Enemy(bx, HEIGHT - 88)
-    e.tag = f"Bandit {i}"
+    e.tag = f"Bandit {i+1}"
     map_enemies.add(e)
-# place the boss even further right
-boss = Boss(WIDTH + 2500, HEIGHT - 140)  # Boss is far to the right
+
+# place the boss near the far right of the level
+boss = Boss(LEVEL_WIDTH - 300, HEIGHT - 140)
 boss.tag = "Bandit King"
 map_enemies.add(boss)
+
+# Secret portal for alternate ending (appears when player has enough water)
+# Portal location: near the end of level but before boss
+portal_rect = pygame.Rect(LEVEL_WIDTH - 500, HEIGHT - 200, 60, 120)
+portal_water_requirement = 50  # Need 50 water to use portal
 
 # shop area (village at left)
 shop_rect = pygame.Rect(40, HEIGHT - 200, 140, 160)
@@ -733,6 +1008,12 @@ def draw_hud():
     if abs(player.rect.centerx - shop_rect.centerx) < 200:
         shop_hint = FONT.render("Press E to enter shop", True, YELLOW)
         SCREEN.blit(shop_hint, (shop_rect.centerx - 100, shop_rect.top - 50))
+    
+    # proximity hint for portal
+    if abs(player.rect.centerx - portal_rect.centerx) < 250:
+        if player.water >= portal_water_requirement:
+            portal_hint = FONT.render(f"Press E for Secret Ending (Need {portal_water_requirement} Water)", True, (200, 100, 255))
+            SCREEN.blit(portal_hint, (portal_rect.centerx - 150, portal_rect.top - 50))
 
 # main exploration loop
 global camera_x
@@ -743,6 +1024,9 @@ while True:
         if e.type == pygame.QUIT:
             pygame.quit(); sys.exit()
         if e.type == pygame.KEYDOWN:
+            if e.key == pygame.K_d:
+                # Toggle debug mode
+                game_state.debug_mode = not game_state.debug_mode
             if e.key == pygame.K_p:
                 # use potion - prioritize health if HP is low, otherwise try health first
                 if player.health < player.max_health * 0.5:
@@ -815,6 +1099,26 @@ while True:
     map_swings.update()
     particles.update()
 
+    # Check for portal collision - alternate ending
+    if player.rect.colliderect(portal_rect) and player.water >= portal_water_requirement:
+        cutscene("A STRANGE PORTAL", [
+            "You've discovered something extraordinary...",
+            "A shimmering gateway appears before you."
+        ], duration=3.0, color_scheme=((200, 100, 255), (100, 255, 200), (255, 200, 100)))
+        
+        story([
+            "You step through the mystical portal...",
+            "",
+            "The realm of 67 begins to shift and change.",
+            "Your accumulated 67 Water creates a bridge between worlds.",
+            "",
+            f"You escape with {player.water} Water to an alternate dimension.",
+            "The portal closes behind you forever.",
+            "",
+            "ALTERNATE ENDING – You became a traveler between worlds!"
+        ])
+        pygame.quit(); sys.exit()
+
     # approach detection: start duel when close enough
     engaged = None
     for me in map_enemies:
@@ -822,6 +1126,17 @@ while True:
             engaged = me
             break
     if engaged is not None:
+        # Check if it's the boss
+        is_boss_fight = isinstance(engaged, Boss)
+        
+        if is_boss_fight:
+            # Boss encounter cutscene
+            cutscene("THE BANDIT KING", [
+                "At last, you face the tyrant!",
+                "The shadows part to reveal the legendary outlaw...",
+                "Victory or death awaits."
+            ], duration=3.5)
+        
         # transition to duel with only that enemy
         story([f"You approach {getattr(engaged,'tag', 'an enemy')}!"])
         # Reset positions for duel: center player on screen, place enemy to the right
@@ -856,6 +1171,12 @@ while True:
     # check victory: if boss removed
     boss_alive = any(isinstance(m, Boss) for m in map_enemies)
     if not boss_alive:
+        # Victory cutscene
+        cutscene("VICTORY!", [
+            "The Bandit King falls...",
+            "The darkness lifts from the realm of 67."
+        ], duration=3.0)
+        
         story([
             "You defeated the Bandit King!",
             "The princess is saved.",
@@ -873,14 +1194,47 @@ while True:
     shake_x, shake_y = apply_screen_shake()
     
     # draw world
+    # Sky gradient
     SCREEN.fill(SKY)
+    
+    # Draw parallax background mountains (far layer)
+    mountain_color1 = (60, 100, 140)
+    mountain_color2 = (80, 120, 160)
+    parallax_offset = int(game_state.camera_x * 0.2)
+    # Left mountain
+    mountain1_points = [(0 - parallax_offset, HEIGHT - 150), (300 - parallax_offset, 200), (600 - parallax_offset, HEIGHT - 150)]
+    pygame.draw.polygon(SCREEN, mountain_color1, mountain1_points)
+    # Right mountain
+    mountain2_points = [(WIDTH//2 - parallax_offset, HEIGHT - 100), (WIDTH - parallax_offset, 150), (WIDTH + 300 - parallax_offset, HEIGHT - 100)]
+    pygame.draw.polygon(SCREEN, mountain_color2, mountain2_points)
+    
+    # Draw decorative clouds
+    cloud_color = (200, 220, 255)
+    for i in range(3):
+        cloud_x = (game_state.camera_x * 0.05 + i * 400) % (LEVEL_WIDTH + 200)
+        cloud_y = 80 + i * 80
+        for j in range(4):
+            pygame.draw.circle(SCREEN, cloud_color, (int(cloud_x + j*30), int(cloud_y)), 20)
+    
     # draw platforms with camera offset
     for p in plats:
         screen_rect = p.rect.copy()
         screen_rect.x -= game_state.camera_x
         screen_rect.x += shake_x
         screen_rect.y += shake_y
+        
+        # Draw platform with texture
         SCREEN.blit(p.image, screen_rect)
+        
+        # Add grass/detail on top of ground platforms
+        if screen_rect.top >= HEIGHT - 100:  # Ground level
+            for x in range(0, int(screen_rect.width), 30):
+                grass_points = [
+                    (int(screen_rect.left + x), int(screen_rect.top)),
+                    (int(screen_rect.left + x + 8), int(screen_rect.top - 5)),
+                    (int(screen_rect.left + x + 15), int(screen_rect.top))
+                ]
+                pygame.draw.polygon(SCREEN, (40, 120, 40), grass_points)
     
     # draw shop with camera offset
     shop_screen_rect = shop_rect.copy()
@@ -890,6 +1244,26 @@ while True:
     pygame.draw.rect(SCREEN, (120,100,80), shop_screen_rect)
     if abs(shop_screen_rect.centerx - WIDTH//2) < WIDTH:  # Only draw text if shop is on screen
         draw_text_center("Village", shop_screen_rect.top + 12, 20, WHITE)
+    
+    # draw secret portal with camera offset
+    portal_screen_rect = portal_rect.copy()
+    portal_screen_rect.x -= game_state.camera_x
+    portal_screen_rect.x += shake_x
+    portal_screen_rect.y += shake_y
+    if abs(portal_screen_rect.centerx - WIDTH//2) < WIDTH:  # Only draw if on screen
+        # Draw glowing portal effect
+        portal_glow = pygame.Surface((portal_screen_rect.width + 20, portal_screen_rect.height + 20), pygame.SRCALPHA)
+        frame_time = pygame.time.get_ticks() / 1000.0
+        glow_color_r = int(200 + math.sin(frame_time * 3) * 50)
+        glow_color_g = int(100 + math.sin(frame_time * 2.5) * 50)
+        glow_color_b = int(200 + math.sin(frame_time * 3.5) * 50)
+        pygame.draw.circle(portal_glow, (glow_color_r, glow_color_g, glow_color_b, 100), (portal_glow.get_width()//2, portal_glow.get_height()//2), 40)
+        SCREEN.blit(portal_glow, (portal_screen_rect.x - 10, portal_screen_rect.y - 10))
+        
+        # Draw portal rect with gradient effect
+        pygame.draw.rect(SCREEN, (150, 50, 200), portal_screen_rect, 3)
+        pygame.draw.rect(SCREEN, (200, 100, 255), (portal_screen_rect.x + 5, portal_screen_rect.y + 5, portal_screen_rect.width - 10, portal_screen_rect.height - 10), 2)
+        draw_text_center("Portal", portal_screen_rect.centery - 5, 16, (200, 100, 255))
     
     # draw particles, enemies and effects with camera offset
     for part in particles:
@@ -919,5 +1293,31 @@ while True:
     player.draw_at_pos(SCREEN, screen_rect)
     
     draw_hud()
+    
+    # Show hitboxes when sword is active
+    if len(map_swings) > 0 or any(e.hit_flash_timer > 0 for e in map_enemies):
+        debug_font = pygame.font.Font(None, 20)
+        
+        # Draw sword hitboxes (when active)
+        for sw in map_swings:
+            sw_rect = sw.rect.copy()
+            sw_rect.x -= game_state.camera_x
+            sw_rect.x += shake_x
+            sw_rect.y += shake_y
+            pygame.draw.rect(SCREEN, YELLOW, sw_rect, 2)
+        
+        # Draw enemy hitboxes that are being hit
+        for me in map_enemies:
+            if me.hit_flash_timer > 0:
+                screen_rect = me.rect.copy()
+                screen_rect.x -= game_state.camera_x
+                screen_rect.x += shake_x
+                screen_rect.y += shake_y
+                # Draw in bright red when hit
+                pygame.draw.rect(SCREEN, (255, 100, 100), screen_rect, 3)
+                # Pulsing effect - thicker border when freshly hit
+                if me.hit_flash_timer > 4:
+                    pygame.draw.rect(SCREEN, RED, screen_rect, 5)
+    
     pygame.display.flip()
 
