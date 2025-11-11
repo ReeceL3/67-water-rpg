@@ -100,10 +100,34 @@ class SwordSwing(pygame.sprite.Sprite):
         # active damage frames
         self.active_start = 3
         self.active_end = 8
-        # base drawing surface for the arc (scaled)
-        size = int(64 * CHAR_SCALE)
+        # Draw horizontal sword pointing right
+        blade_length = int(50 * CHAR_SCALE)
+        blade_w = max(2, int(5 * CHAR_SCALE))
+        handle_len = int(10 * CHAR_SCALE)
+        handle_w = max(2, int(5 * CHAR_SCALE))
+        
+        size = int(80 * CHAR_SCALE)
         self.base = pygame.Surface((size, size), pygame.SRCALPHA)
-        pygame.draw.arc(self.base, YELLOW, (8*CHAR_SCALE,8*CHAR_SCALE,48*CHAR_SCALE,48*CHAR_SCALE), math.radians(20), math.radians(160), max(2, int(6*CHAR_SCALE)))
+        cx = size // 2
+        cy = size // 2
+        
+        # Draw sword horizontally (for stabbing motion)
+        # blade: long thin rectangle
+        blade_rect = pygame.Rect(cx, cy - blade_w//2, blade_length, blade_w)
+        pygame.draw.rect(self.base, (220,220,230), blade_rect)  # steel blade
+        # blade tip (pointed)
+        tip = [(cx + blade_length, cy - blade_w//2), (cx + blade_length + int(8*CHAR_SCALE), cy), (cx + blade_length, cy + blade_w//2)]
+        pygame.draw.polygon(self.base, (220,220,230), tip)
+        # guard
+        guard_h = int(12 * CHAR_SCALE)
+        pygame.draw.rect(self.base, (150,120,60), (cx - int(2*CHAR_SCALE), cy - guard_h//2, int(4*CHAR_SCALE), guard_h))
+        # handle (to the left)
+        pygame.draw.rect(self.base, (60,30,10), (cx - int(2*CHAR_SCALE) - handle_len, cy - handle_w//2, handle_len, handle_w))
+        # pommel
+        pygame.draw.circle(self.base, (180,140,60), (cx - int(2*CHAR_SCALE) - handle_len - int(4*CHAR_SCALE), cy), int(4*CHAR_SCALE))
+        # edge highlight on top of blade
+        pygame.draw.line(self.base, WHITE, (cx, cy - blade_w//2 + 1), (cx + blade_length, cy - blade_w//2 + 1), max(1, int(1*CHAR_SCALE)))
+        
         self.image = pygame.Surface((size, size), pygame.SRCALPHA)
         self.rect = self.image.get_rect()
         self.facing = getattr(owner, "facing", 1)
@@ -118,15 +142,24 @@ class SwordSwing(pygame.sprite.Sprite):
         # progress 0..1
         life = 12
         prog = max(0.0, min(1.0, (life - self.timer) / life))
-        angle = -90 + prog * 180
-        if self.facing == -1:
-            angle = -angle
-        # redraw rotated arc
+        
+        # STAB MOTION: extend then retract
+        # 0-0.4: extend forward (thrust)
+        # 0.4-1.0: retract back
+        if prog < 0.4:
+            extend = (prog / 0.4) * int(60 * CHAR_SCALE)  # extends up to 60 pixels
+        else:
+            extend = (1.0 - prog) / 0.6 * int(60 * CHAR_SCALE)  # retracts
+        
+        # redraw the sword (static orientation, just translate)
         self.image.fill((0,0,0,0))
-        rotated = pygame.transform.rotate(self.base, angle)
-        self.image.blit(rotated, (32 - rotated.get_width() // 2, 32 - rotated.get_height() // 2))
-        offset_x = 44 if self.facing == 1 else -44
-        self.rect.center = (self.owner.rect.centerx + offset_x, self.owner.rect.centery - 8)
+        size = self.image.get_width()
+        self.image.blit(self.base, (0, 0))
+        
+        # Position: start at owner + base offset, move forward during stab
+        base_offset_x = int(32 * CHAR_SCALE) if self.facing == 1 else int(-32 * CHAR_SCALE)
+        stab_offset = extend if self.facing == 1 else -extend
+        self.rect.center = (self.owner.rect.centerx + base_offset_x + stab_offset, self.owner.rect.centery)
 
     def damage_active(self):
         life = 12
