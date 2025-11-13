@@ -99,49 +99,40 @@ class Platform(pygame.sprite.Sprite):
 class SwordSwing(pygame.sprite.Sprite):
     def __init__(self, owner):
         super().__init__()
-        # total life in frames
-        self.timer = 12
-        # active damage frames
-        self.active_start = 3
-        self.active_end = 8
-        
-        # Store facing at creation time
+        # swing duration and active frames (slower, overhead swing)
+        self.timer = 22
+        self.active_start = 7
+        self.active_end = 16
+
         self.facing = getattr(owner, "facing", 1)
         self.owner = owner
         self.did_hit = set()
-        
-        # Draw horizontal sword pointing right
-        blade_length = int(50 * CHAR_SCALE)
-        blade_w = max(2, int(5 * CHAR_SCALE))
-        handle_len = int(10 * CHAR_SCALE)
-        handle_w = max(2, int(5 * CHAR_SCALE))
-        
-        size = int(80 * CHAR_SCALE)
-        self.base_right = pygame.Surface((size, size), pygame.SRCALPHA)
-        cx = size // 2
-        cy = size // 2
-        
-        # Draw sword horizontally (for stabbing motion, pointing right)
-        # blade: long thin rectangle
+
+        # New rigid sword style: handle/pivot is at the surface center
+        blade_length = int(70 * CHAR_SCALE)
+        blade_w = max(2, int(4 * CHAR_SCALE))
+        handle_len = int(12 * CHAR_SCALE)
+        size_w = blade_length + handle_len + int(40 * CHAR_SCALE)
+        size_h = int(24 * CHAR_SCALE)
+
+        self.base_right = pygame.Surface((size_w, size_h), pygame.SRCALPHA)
+        cx = size_w // 2
+        cy = size_h // 2
+        # handle centered at pivot
+        pygame.draw.rect(self.base_right, (60,30,10), (cx - handle_len//2, cy - int(handle_len*0.2), handle_len, int(handle_len*0.4)))
+        pygame.draw.circle(self.base_right, (180,140,60), (cx - handle_len//2 - int(4*CHAR_SCALE), cy), int(3*CHAR_SCALE))
+        # blade extends to the right from pivot
         blade_rect = pygame.Rect(cx, cy - blade_w//2, blade_length, blade_w)
-        pygame.draw.rect(self.base_right, (220,220,230), blade_rect)  # steel blade
-        # blade tip (pointed)
-        tip = [(cx + blade_length, cy - blade_w//2), (cx + blade_length + int(8*CHAR_SCALE), cy), (cx + blade_length, cy + blade_w//2)]
+        pygame.draw.rect(self.base_right, (220,220,230), blade_rect)
+        tip = [(cx + blade_length, cy - blade_w//2), (cx + blade_length + int(10*CHAR_SCALE), cy), (cx + blade_length, cy + blade_w//2)]
         pygame.draw.polygon(self.base_right, (220,220,230), tip)
-        # guard
-        guard_h = int(12 * CHAR_SCALE)
-        pygame.draw.rect(self.base_right, (150,120,60), (cx - int(2*CHAR_SCALE), cy - guard_h//2, int(4*CHAR_SCALE), guard_h))
-        # handle (to the left)
-        pygame.draw.rect(self.base_right, (60,30,10), (cx - int(2*CHAR_SCALE) - handle_len, cy - handle_w//2, handle_len, handle_w))
-        # pommel
-        pygame.draw.circle(self.base_right, (180,140,60), (cx - int(2*CHAR_SCALE) - handle_len - int(4*CHAR_SCALE), cy), int(4*CHAR_SCALE))
-        # edge highlight on top of blade
         pygame.draw.line(self.base_right, WHITE, (cx, cy - blade_w//2 + 1), (cx + blade_length, cy - blade_w//2 + 1), max(1, int(1*CHAR_SCALE)))
-        
-        # Create flipped version for left-facing
+
+        # mirrored for left
         self.base_left = pygame.transform.flip(self.base_right, True, False)
-        
-        self.image = pygame.Surface((size, size), pygame.SRCALPHA)
+
+        # image will be replaced with rotated surface each frame
+        self.image = self.base_right.copy()
         self.rect = self.image.get_rect()
 
     def update(self):
@@ -149,33 +140,45 @@ class SwordSwing(pygame.sprite.Sprite):
         if self.timer <= 0:
             self.kill()
             return
-        # progress 0..1
-        life = 12
+
+        life = 22
         prog = max(0.0, min(1.0, (life - self.timer) / life))
-        
-        # STAB MOTION: extend then retract
-        # 0-0.4: extend forward (thrust)
-        # 0.4-1.0: retract back
-        if prog < 0.4:
-            extend = (prog / 0.4) * int(60 * CHAR_SCALE)  # extends up to 60 pixels
+        # Smooth easing: cubic ease-in-out for natural deceleration/acceleration feel
+        if prog < 0.5:
+            ease = 2 * prog * prog
         else:
-            extend = (1.0 - prog) / 0.6 * int(60 * CHAR_SCALE)  # retracts
-        
-        # Choose correct sword orientation based on facing direction
+            ease = -1 + (4 - 2 * prog) * prog
+
+        # angle sweep for top-down overhead swing (downward arc)
+        if self.facing == 1:
+            start_ang, end_ang = -160, 10  # swing from top-left to bottom-right
+        else:
+            start_ang, end_ang = 160, -10  # swing from top-right to bottom-left
+        angle = start_ang + (end_ang - start_ang) * ease
+
         base = self.base_right if self.facing == 1 else self.base_left
-        
-        # redraw the sword (static orientation, just translate)
-        self.image.fill((0,0,0,0))
-        size = self.image.get_width()
-        self.image.blit(base, (0, 0))
-        
-        # Position: start at owner + base offset, move forward during stab
-        base_offset_x = int(32 * CHAR_SCALE) if self.facing == 1 else int(-32 * CHAR_SCALE)
-        stab_offset = extend if self.facing == 1 else -extend
-        self.rect.center = (self.owner.rect.centerx + base_offset_x + stab_offset, self.owner.rect.centery)
+        rot = pygame.transform.rotate(base, angle)
+
+        # draw translucent trails of the rotated blade for motion blur
+        img = pygame.Surface(rot.get_size(), pygame.SRCALPHA)
+        for i in range(3):
+            t = (i + 1) / 4.0
+            alpha = int(120 * (1 - t) * (1 - ease))
+            trail = rot.copy()
+            trail.fill((255,255,255,alpha), special_flags=pygame.BLEND_RGBA_MULT)
+            offset_x = int(-t * 6 * self.facing)
+            img.blit(trail, (offset_x + 2 * i, 0))
+        # main blade on top
+        img.blit(rot, (0,0))
+
+        # position pivot (image center) floating out in front of player, not at body
+        hand_x = self.owner.rect.centerx + self.facing * (self.owner.rect.width // 2 + int(20 * CHAR_SCALE))
+        hand_y = self.owner.rect.centery  # center height
+        self.image = img
+        self.rect = self.image.get_rect(center=(hand_x, hand_y))
 
     def damage_active(self):
-        life = 12
+        life = 22
         elapsed = life - self.timer
         return self.active_start <= elapsed <= self.active_end
 
@@ -185,11 +188,13 @@ class MagicBolt(pygame.sprite.Sprite):
     def __init__(self, owner):
         super().__init__()
         self.owner = owner
-        self.speed = 18 * owner.facing
+        # Nerfed projectile speed for balance (was 18)
+        self.speed = 14 * owner.facing
         self.image = pygame.Surface((int(12*CHAR_SCALE), int(8*CHAR_SCALE)), pygame.SRCALPHA)
         pygame.draw.ellipse(self.image, (150,180,255), (0,0,self.image.get_width(), self.image.get_height()))
         self.rect = self.image.get_rect(center=(owner.rect.centerx + owner.facing* (owner.rect.width//2 + 10), owner.rect.centery))
-        self.life = 40
+        # Shorter lifetime so mages can't spam long-range shots across whole map
+        self.life = 30
         self.is_projectile = True
         self.did_hit = set()
 
@@ -231,6 +236,10 @@ class Player(pygame.sprite.Sprite):
         # jump tracking (single jump only)
         self.jumps = 0
         self.max_jumps = 1
+        # track whether jump key was held last frame to enforce single jump per press
+        self.jump_held_last = False
+        # cast timer for Mage casting animation (frames)
+        self.cast_timer = 0
         self.vel_x = 0.0  # smooth horizontal velocity
         self.on_ground_last = False
         self.land_time = 0
@@ -328,13 +337,13 @@ class Player(pygame.sprite.Sprite):
                 particles.add(Particle(self.rect.centerx, self.rect.bottom, vx, vy, BLUE, 15))
         self.on_ground_last = on_ground
 
-        if keys[pygame.K_w]:
-            if on_ground:
-                self.vel_y = -self.jump
-                self.jumps = 1
-            elif self.jumps < self.max_jumps:
-                self.vel_y = -self.jump
-                self.jumps += 1
+        # Jump only when on the ground (edge-triggered) to prevent mid-air jumps
+        jump_now = keys[pygame.K_w] and not self.jump_held_last
+        if jump_now and on_ground:
+            self.vel_y = -self.jump
+            self.jumps = 1
+        # remember held state for next frame
+        self.jump_held_last = bool(keys[pygame.K_w])
 
         # prevent going off top/bottom of screen
         if self.rect.top < 0:
@@ -384,27 +393,51 @@ class Player(pygame.sprite.Sprite):
                 # reset jump counter when landing
                 self.jumps = 0
 
-        # attack: Mage fires projectiles, others do melee swing
+        # attack: Mage has a short cast animation before firing; others do melee swing
         if keys[pygame.K_z] and self.att_cd == 0:
             if self.class_name.lower().startswith('mag'):
-                bolt = MagicBolt(self)
-                swings.add(bolt)
+                # start casting (if not already casting)
+                if self.cast_timer == 0:
+                    self.cast_timer = 10  # cast duration in frames
+                    self.att_cd = 25
             else:
                 swing = SwordSwing(self)
                 swings.add(swing)
-            self.att_cd = 25
+                self.att_cd = 25
         if self.att_cd > 0:
             self.att_cd -= 1
 
-        # animation phase for bobbing while walking
-        if self.vel_x != 0:
+        # handle mage cast timer: spawn projectile at mid-cast with visual flash
+        if self.cast_timer > 0:
+            # spawn particle flash and bolt at mid-point
+            mid_point = 4
+            if self.cast_timer == mid_point:
+                # spawn slight muzzle flash particle at player's hand
+                hand_x = self.rect.centerx + self.facing * (self.rect.width // 2)
+                hand_y = self.rect.centery - int(6 * self.scale)
+                for _ in range(6):
+                    vx = random.uniform(-1.5, 1.5) + self.facing * 0.5
+                    vy = random.uniform(-1, -0.2)
+                    particles.add(Particle(hand_x, hand_y, vx, vy, CYAN, lifetime=12))
+                # spawn the projectile
+                bolt = MagicBolt(self)
+                swings.add(bolt)
+            self.cast_timer -= 1
+
+        # animation phase for walking: only advance when actually moving horizontally
+        if abs(self.vel_x) > 0.2:
             self.walk_phase = (self.walk_phase + 1) % 30
         else:
             self.walk_phase = 0
 
     def on_ground(self, plats):
+        # Consider the player on-ground when their bottom is very close to a platform's top
+        # and the player's horizontal center is above that platform.
+        # Use a small tolerance to allow for minor positional differences (e.g., 6 pixels).
+        tol = 6
         for p in plats:
-            if self.rect.bottom <= p.rect.top + 5 and p.rect.left < self.rect.centerx < p.rect.right:
+            top = p.rect.top
+            if (top - tol) <= self.rect.bottom <= (top + tol) and (p.rect.left < self.rect.centerx < p.rect.right):
                 return True
         return False
 
@@ -484,29 +517,31 @@ class Player(pygame.sprite.Sprite):
             # compute progress of dash (0..1)
             dash_prog = max(0.0, min(1.0, (12 - self.dash_timer) / 12.0))
             
-            # Draw speed lines behind the character
-            line_color = (150, 200, 255)
-            num_lines = 5
-            for i in range(num_lines):
-                line_opacity = int(180 * (1 - dash_prog) * (1 - i/num_lines))
-                line_start_x = rect.centerx - int(self.dash_vel * 0.06 * (i+1)) * self.facing
-                pygame.draw.line(s, line_color, 
-                                (line_start_x, rect.centery - int(15*self.scale)), 
-                                (line_start_x - int(20*self.scale) * self.facing, rect.centery + int(15*self.scale)), 
-                                max(1, int(2*self.scale)))
+            # Draw smoother speed streaks behind the character with easing
+            streak_color = (150, 200, 255)
+            for i in range(1, 6):
+                t = i / 6.0
+                opacity = int(200 * (1 - dash_prog) * (1 - t))
+                offset = int(self.dash_vel * 0.06 * (i) * (1 - dash_prog))
+                start_x = rect.centerx - offset * self.facing
+                pygame.draw.line(s, streak_color, 
+                                (start_x, rect.centery - int(12*self.scale) - i),
+                                (start_x - int(28*self.scale) * self.facing, rect.centery + int(12*self.scale) + i),
+                                max(1, int(1 + (1 - t) * self.scale)))
             
-            # Lean angle when dashing
-            lean = int(20 * (1 - (self.dash_timer / 12.0)))
+            # Lean angle when dashing (smoother easing)
+            lean = int(24 * (1 - (self.dash_timer / 12.0)) * (1 - 0.3 * math.sin(dash_prog * math.pi * 2)))
             angle = -lean if self.facing == 1 else lean
             rotated = pygame.transform.rotate(char_surf, angle)
             
-            # draw motion blur afterimages
-            for i in range(2):
-                alpha = max(50, int(140 * (1 - i / 2.0) * (1 - dash_prog)))
+            # draw layered motion blur afterimages for depth
+            for i in range(3):
+                t = (i + 1) / 4.0
+                alpha = int(120 * (1 - t) * (1 - dash_prog))
                 trail = rotated.copy()
-                trail.fill((100, 180, 255, alpha), special_flags=pygame.BLEND_RGBA_MULT)
-                tx = rect.x - int(self.dash_vel * 0.05 * (i+1.5) * self.facing)
-                ty = rect.y
+                trail.fill((120, 200, 255, alpha), special_flags=pygame.BLEND_RGBA_MULT)
+                tx = rect.x - int(self.dash_vel * 0.04 * (i+1.2) * self.facing)
+                ty = rect.y - int(i * 2 * (1 - dash_prog))
                 s.blit(trail, (tx - (rotated.get_width() - surf_w)//2, ty - (rotated.get_height() - surf_h)//2))
             
             # Glow effect at dash point
@@ -573,6 +608,8 @@ class Enemy(pygame.sprite.Sprite):
             self.facing = 1 if player.rect.centerx > self.rect.centerx else -1
         else:
             self.rect.x += self.speed*self.dir
+            # clamp to level bounds so bandits cannot run off the map
+            self.rect.x = max(0, min(self.rect.x, LEVEL_WIDTH - self.rect.width))
             self.facing = self.dir
             if random.random()<0.01: self.dir*=-1
         self.vel_y += 0.6
@@ -647,10 +684,12 @@ class Boss(Enemy):
     def ai(self,player,plats,swings,particles):
         self.knockback_x *= 0.90
         self.rect.x += self.knockback_x
-        
+
         if random.random()<0.02:
             self.dir = 1 if player.rect.centerx>self.rect.centerx else -1
         self.rect.x += self.speed*self.dir
+        # clamp boss to level bounds as well
+        self.rect.x = max(0, min(self.rect.x, LEVEL_WIDTH - self.rect.width))
         self.facing = self.dir
         if abs(player.rect.centerx-self.rect.centerx)<150 and self.cool==0:
             swing=SwordSwing(self); swings.add(swing); self.cool=25
@@ -883,6 +922,10 @@ def duel(player,enemies,plats,swings):
         player.update(keys,plats,swings,particles)
         for en in enemies:
             en.ai(player,plats,swings,particles)
+            # In duel mode, keep enemies inside the visible arena so they can't run off-screen
+            en.rect.x = max(0, min(en.rect.x, WIDTH - en.rect.width))
+        # also clamp player to arena bounds
+        player.rect.x = max(0, min(player.rect.x, WIDTH - player.rect.width))
         swings.update()
         particles.update()
         # damage calc (respect swing active window and avoid multiple hits per swing)
@@ -893,11 +936,12 @@ def duel(player,enemies,plats,swings):
             for en in enemies:
                 if sw.owner != en and sw.rect.colliderect(en.rect) and en not in getattr(sw, 'did_hit', set()):
                     # damage amount scales a bit with owner class
-                    dmg = 18
+                    # Base damage reduced slightly; projectile bonus nerfed
+                    dmg = 16
                     if getattr(sw.owner, 'class_name', '').lower().startswith('war'):
                         dmg += 6
                     if getattr(sw, 'is_projectile', False):
-                        dmg += 8
+                        dmg += 4
                     en.take_damage(dmg, particles)
                     if hasattr(sw, 'did_hit'):
                         sw.did_hit.add(en)
